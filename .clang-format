@@ -1,0 +1,20 @@
+Language: Cpp
+BasedOnStyle: Google
+ColumnLimit: 80
+DerivePointerAlignment: false
+PointerAlignment: Left
+SortIncludes: true
+IncludeBlocks: Preserve
+IndentPPDirectives: AfterHash
+ForEachMacros: ['']
+
+SpacesBeforeTrailingComments: 2
+
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+AlignConsecutiveMacros: true
+AlignEscapedNewlines: Right
+AlignTrailingComments: true
+
+MacroBlockBegin: LUAINT_PLUGIN_BEGIN
+MacroBlockEnd: LUAINT_PLUGIN_END
