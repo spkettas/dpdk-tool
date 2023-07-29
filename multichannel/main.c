@@ -257,15 +257,12 @@ int main(int argc, char* argv[]) {
 
   arp_table_init();
 
-  /* Call lcore_main on each slave lcore */
+  /* Launch per-lcore function on every lcore */
+  rte_eal_mp_remote_launch(lcore_main, NULL, CALL_MAIN);
+
   RTE_LCORE_FOREACH_WORKER(lcore_id) {
-    rte_eal_remote_launch(lcore_main, NULL, lcore_id);
+    if (rte_eal_wait_lcore(lcore_id) < 0) return -1;
   }
-
-  /* Call it on master lcore too */
-  (void)lcore_main(NULL);
-
-  rte_eal_mp_wait_lcore();
 
   // clean
   arp_table_cleanup();
