@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <inttypes.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -668,96 +669,12 @@ static void log_link_state(struct rte_kni* kni, int prev,
  */
 static void* monitor_all_ports_link_status(void* arg) {
   sleep(2);
-  printf("set kni port ip\n");
+  printf("set kni port 0 ip\n");
 
-  // system("ifconfig vEth0 192.168.100.40/24 up");
-  system("ip addr add 192.168.100.38/24 dev vEth0");
+  // system("ifconfig vEth0 192.168.1.40/24 up");
+  system("ip addr add 192.168.1.38/24 dev vEth0");
   system("ip link set vEth0 up");
   return NULL;
-}
-
-static int kni_change_mtu_(uint16_t port_id, unsigned int new_mtu) {
-  int                     ret;
-  uint16_t                nb_rxd = NB_RXD;
-  uint16_t                nb_txd = NB_TXD;
-  struct rte_eth_conf     conf;
-  struct rte_eth_dev_info dev_info;
-  struct rte_eth_rxconf   rxq_conf;
-  struct rte_eth_txconf   txq_conf;
-
-  if (!rte_eth_dev_is_valid_port(port_id)) {
-    RTE_LOG(ERR, APP, "Invalid port id %d\n", port_id);
-    return -EINVAL;
-  }
-
-  RTE_LOG(INFO, APP, "Change MTU of port %d to %u\n", port_id, new_mtu);
-
-  /* Stop specific port */
-  ret = rte_eth_dev_stop(port_id);
-  if (ret != 0) {
-    RTE_LOG(ERR, APP, "Failed to stop port %d: %s\n", port_id,
-            rte_strerror(-ret));
-    return ret;
-  }
-
-  memcpy(&conf, &port_conf, sizeof(conf));
-  /* Set new MTU */
-  if (new_mtu > RTE_ETHER_MAX_LEN)
-    conf.rxmode.offloads |= DEV_RX_OFFLOAD_JUMBO_FRAME;
-  else
-    conf.rxmode.offloads &= ~DEV_RX_OFFLOAD_JUMBO_FRAME;
-
-  /* mtu + length of header + length of FCS = max pkt length */
-  conf.rxmode.max_rx_pkt_len =
-      new_mtu + KNI_ENET_HEADER_SIZE + KNI_ENET_FCS_SIZE;
-  ret = rte_eth_dev_configure(port_id, 1, 1, &conf);
-  if (ret < 0) {
-    RTE_LOG(ERR, APP, "Fail to reconfigure port %d\n", port_id);
-    return ret;
-  }
-
-  ret = rte_eth_dev_adjust_nb_rx_tx_desc(port_id, &nb_rxd, &nb_txd);
-  if (ret < 0)
-    rte_exit(EXIT_FAILURE,
-             "Could not adjust number of descriptors "
-             "for port%u (%d)\n",
-             (unsigned int)port_id, ret);
-
-  ret = rte_eth_dev_info_get(port_id, &dev_info);
-  if (ret != 0) {
-    RTE_LOG(ERR, APP, "Error during getting device (port %u) info: %s\n",
-            port_id, strerror(-ret));
-
-    return ret;
-  }
-
-  rxq_conf          = dev_info.default_rxconf;
-  rxq_conf.offloads = conf.rxmode.offloads;
-  ret =
-      rte_eth_rx_queue_setup(port_id, 0, nb_rxd, rte_eth_dev_socket_id(port_id),
-                             &rxq_conf, pktmbuf_pool);
-  if (ret < 0) {
-    RTE_LOG(ERR, APP, "Fail to setup Rx queue of port %d\n", port_id);
-    return ret;
-  }
-
-  txq_conf          = dev_info.default_txconf;
-  txq_conf.offloads = conf.txmode.offloads;
-  ret               = rte_eth_tx_queue_setup(port_id, 0, nb_txd,
-                                             rte_eth_dev_socket_id(port_id), &txq_conf);
-  if (ret < 0) {
-    RTE_LOG(ERR, APP, "Fail to setup Tx queue of port %d\n", port_id);
-    return ret;
-  }
-
-  /* Restart specific port */
-  ret = rte_eth_dev_start(port_id);
-  if (ret < 0) {
-    RTE_LOG(ERR, APP, "Fail to restart port %d\n", port_id);
-    return ret;
-  }
-
-  return 0;
 }
 
 /* Callback for request of changing MTU */
@@ -765,7 +682,7 @@ static int kni_change_mtu(uint16_t port_id, unsigned int new_mtu) {
   int ret;
 
   rte_atomic32_inc(&kni_pause);
-  ret = kni_change_mtu_(port_id, new_mtu);
+  ret = rte_eth_dev_set_mtu(port_id, new_mtu);
   rte_atomic32_dec(&kni_pause);
 
   return ret;
@@ -784,26 +701,9 @@ static int kni_config_network_interface(uint16_t port_id, uint8_t if_up) {
           if_up ? "up" : "down");
 
   rte_atomic32_inc(&kni_pause);
-
-  if (if_up != 0) { /* Configure network interface up */
-    ret = rte_eth_dev_stop(port_id);
-    if (ret != 0) {
-      RTE_LOG(ERR, APP, "Failed to stop port %d: %s\n", port_id,
-              rte_strerror(-ret));
-      rte_atomic32_dec(&kni_pause);
-      return ret;
-    }
-    ret = rte_eth_dev_start(port_id);
-  } else { /* Configure network interface down */
-    ret = rte_eth_dev_stop(port_id);
-    if (ret != 0) {
-      RTE_LOG(ERR, APP, "Failed to stop port %d: %s\n", port_id,
-              rte_strerror(-ret));
-      rte_atomic32_dec(&kni_pause);
-      return ret;
-    }
-  }
-
+  ret = (if_up) ?
+		rte_eth_dev_set_link_up(port_id) :
+		rte_eth_dev_set_link_down(port_id);
   rte_atomic32_dec(&kni_pause);
 
   if (ret < 0) RTE_LOG(ERR, APP, "Failed to start port %d\n", port_id);
@@ -886,8 +786,7 @@ static int kni_alloc(uint16_t port_id) {
       ops.port_id            = port_id;
       ops.change_mtu         = kni_change_mtu;
       ops.config_network_if  = kni_config_network_interface;
-      ops.config_mac_address = kni_config_mac_address;
-
+      // ops.config_mac_address = kni_config_mac_address;
       kni = rte_kni_alloc(pktmbuf_pool, &conf, &ops);
     } else
       kni = rte_kni_alloc(pktmbuf_pool, &conf, NULL);
@@ -994,17 +893,18 @@ int main(int argc, char** argv) {
 
     kni_alloc(port);
   }
+  
   //   check_all_ports_link_status(ports_mask);
-
   ret = rte_ctrl_thread_create(&kni_link_tid, "KNI set ip", NULL,
                                monitor_all_ports_link_status, NULL);
 
   /* Launch per-lcore function on every lcore */
   rte_eal_mp_remote_launch(main_loop, NULL, CALL_MAIN);
-  printf("start all lcores\n");
   RTE_LCORE_FOREACH_WORKER(i) {
     if (rte_eal_wait_lcore(i) < 0) return -1;
   }
+
+  pthread_join(kni_link_tid, &retval);
 
   /* Release resources */
   RTE_ETH_FOREACH_DEV(port) {
