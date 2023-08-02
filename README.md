@@ -1,6 +1,6 @@
 ## dpdk-tool 
 
-dpdk 小工具集锦  
+dpdk 小工具集合 
 
 
 ### 编译  
@@ -33,3 +33,7 @@ arp/icmp协议实现，单核心收包，并响应常用的arp/icmp协议包
 
 - multichannel   
 arp/icmp协议实现，多核心收包，并响应常用的arp/icmp协议包  
+
+- kni  
+kni 示例，通过RING解耦；主进程收包，子进程消费数据包并与虚拟网卡交互  
+

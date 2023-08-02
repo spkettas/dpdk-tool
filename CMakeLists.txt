@@ -22,7 +22,8 @@ include_directories(
     ${ROOT}/include
 )
 
-add_subdirectory(kni)
 add_subdirectory(singlechannel)
 add_subdirectory(multichannel)
 add_subdirectory(dpdkpcap)
+add_subdirectory(kni)
+add_subdirectory(kni_queue)

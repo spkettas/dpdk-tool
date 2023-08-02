@@ -2,7 +2,7 @@
  * Copyright (c) 1998-2020  Inc. All rights reserved.
  *
  * @file main.c
- * @author kanesun (kanesun@gmail.com)
+ * @author spkettas (spkettas@gmail.com)
  * @date 2023-07-22
  *
  * @brief  多核收包示例
