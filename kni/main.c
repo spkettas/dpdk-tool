@@ -18,14 +18,14 @@
 #include <string.h>
 #include <sys/queue.h>
 
-#include <sys/socket.h>
-#include <sys/types.h>
 #include <fcntl.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include <rte_atomic.h>
@@ -88,10 +88,10 @@
  * Structure of port parameters
  */
 struct kni_port_params {
-  uint16_t port_id;    /* Port ID */
-  unsigned lcore_rx;   /* lcore ID for RX */
-  unsigned lcore_tx;   /* lcore ID for TX */
-  uint32_t nb_kni;     /* Number of KNI devices to be created */
+  uint16_t        port_id;  /* Port ID */
+  unsigned        lcore_rx; /* lcore ID for RX */
+  unsigned        lcore_tx; /* lcore ID for TX */
+  uint32_t        nb_kni;   /* Number of KNI devices to be created */
   struct rte_kni* kni[KNI_MAX_KTHREAD]; /* KNI context pointers */
 } __rte_cache_aligned;
 
@@ -525,7 +525,7 @@ static void init_kni(void) {
   /* Calculate the maximum number of KNI interfaces that will be used */
   for (i = 0; i < RTE_MAX_ETHPORTS; i++) {
     if (kni_port_params_array[i]) {
-      num_of_kni_ports ++;
+      num_of_kni_ports++;
     }
   }
 
@@ -671,9 +671,9 @@ static void* monitor_all_ports_link_status(void* arg) {
   sleep(2);
   printf("set kni port 0 ip\n");
 
-  // system("ifconfig vEth0 192.168.1.40/24 up");
-  system("ip addr add 192.168.1.38/24 dev vEth0");
-  system("ip link set vEth0 up");
+  // system("ifconfig kni0 192.168.1.40/24 up");
+  system("ip addr add 192.168.1.38/24 dev kni0");
+  system("ip link set kni0 up");
   return NULL;
 }
 
@@ -701,9 +701,8 @@ static int kni_config_network_interface(uint16_t port_id, uint8_t if_up) {
           if_up ? "up" : "down");
 
   rte_atomic32_inc(&kni_pause);
-  ret = (if_up) ?
-		rte_eth_dev_set_link_up(port_id) :
-		rte_eth_dev_set_link_down(port_id);
+  ret = (if_up) ? rte_eth_dev_set_link_up(port_id)
+                : rte_eth_dev_set_link_down(port_id);
   rte_atomic32_dec(&kni_pause);
 
   if (ret < 0) RTE_LOG(ERR, APP, "Failed to start port %d\n", port_id);
@@ -746,12 +745,12 @@ static int kni_alloc(uint16_t port_id) {
 
   if (port_id >= RTE_MAX_ETHPORTS || !params[port_id]) return -1;
 
-  params[port_id]->nb_kni = 1;  // one port one vEth
+  params[port_id]->nb_kni = 1;  // one port one kni
 
   for (i = 0; i < params[port_id]->nb_kni; i++) {
     /* Clear conf at first */
     memset(&conf, 0, sizeof(conf));
-    snprintf(conf.name, RTE_KNI_NAMESIZE, "vEth%u", port_id); // vEth0
+    snprintf(conf.name, RTE_KNI_NAMESIZE, "kni%u", port_id);  // kni0
     conf.group_id  = port_id;
     conf.mbuf_size = MAX_PACKET_SZ;
 
@@ -783,9 +782,9 @@ static int kni_alloc(uint16_t port_id) {
       conf.max_mtu = dev_info.max_mtu;
 
       memset(&ops, 0, sizeof(ops));
-      ops.port_id            = port_id;
-      ops.change_mtu         = kni_change_mtu;
-      ops.config_network_if  = kni_config_network_interface;
+      ops.port_id           = port_id;
+      ops.change_mtu        = kni_change_mtu;
+      ops.config_network_if = kni_config_network_interface;
       // ops.config_mac_address = kni_config_mac_address;
       kni = rte_kni_alloc(pktmbuf_pool, &conf, &ops);
     } else
@@ -796,7 +795,7 @@ static int kni_alloc(uint16_t port_id) {
                "Fail to create kni for "
                "port: %d\n",
                port_id);
-              
+
     params[port_id]->kni[i] = kni;
   }
 
@@ -893,7 +892,7 @@ int main(int argc, char** argv) {
 
     kni_alloc(port);
   }
-  
+
   //   check_all_ports_link_status(ports_mask);
   ret = rte_ctrl_thread_create(&kni_link_tid, "KNI set ip", NULL,
                                monitor_all_ports_link_status, NULL);

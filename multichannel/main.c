@@ -10,7 +10,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include "header.h"
+#include "arp.h"
 #include "rte_eal.h"
 
 static const struct rte_eth_conf port_conf_default = {
@@ -18,132 +18,21 @@ static const struct rte_eth_conf port_conf_default = {
 
 unsigned              nb_ports;
 static rte_atomic16_t queue = RTE_ATOMIC32_INIT(-1);
-struct rte_ether_addr ether_mac_addr;
+struct rte_ether_addr mac_addr;
 
-static int16_t get_queue() { return rte_atomic16_add_return(&queue, 1); }
-
-static uint32_t get_ip(uint16_t port) {
+static const char* get_ip(uint16_t port) {
   static const char* local_ip1 = "192.168.100.39";  // port 0
-  static const char* local_ip2 = "192.168.100.40";  // port 1
-  struct in_addr     ipv4_addr;
-  const char*        local_ip = local_ip1;
+  static const char* local_ip2 = "192.168.200.39";  // port 1
+
+  const char* local_ip = local_ip1;
   if (port == 1) {
     local_ip = local_ip2;
   }
 
-  inet_pton(AF_INET, local_ip, &ipv4_addr);
-  return ipv4_addr.s_addr;
+  return local_ip;
 }
 
-static void handle_arp(uint16_t port, uint16_t queue, struct rte_mbuf* pkt,
-                       struct rte_ether_hdr* eth_hdr) {
-  uint32_t            our_ip  = get_ip(port);
-  struct rte_arp_hdr* arp_hdr = rte_pktmbuf_mtod_offset(
-      pkt, struct rte_arp_hdr*, sizeof(struct rte_ether_hdr));
-
-  printf("port: %u ARP_TYPE: %u\n", port,
-         rte_be_to_cpu_16(arp_hdr->arp_opcode));
-
-  if (rte_be_to_cpu_16(arp_hdr->arp_opcode) == RTE_ARP_OP_REQUEST) {
-    struct in_addr in;
-    in.s_addr = arp_hdr->arp_data.arp_tip;
-    printf("port: %u who has %s\n", port, inet_ntoa(in));
-
-    // Update ARP table with the sender's information
-    arp_table_add(arp_hdr->arp_data.arp_sip, &arp_hdr->arp_data.arp_sha);
-
-    // Check if the ARP request is for our IP
-    if (arp_hdr->arp_data.arp_tip == our_ip) {
-      // Prepare ARP reply
-      arp_hdr->arp_opcode       = rte_cpu_to_be_16(RTE_ARP_OP_REPLY);
-      arp_hdr->arp_data.arp_tip = arp_hdr->arp_data.arp_sip;
-      rte_ether_addr_copy(&arp_hdr->arp_data.arp_sha,
-                          &arp_hdr->arp_data.arp_tha);
-      arp_hdr->arp_data.arp_sip = our_ip;
-      rte_ether_addr_copy(&ether_mac_addr, &arp_hdr->arp_data.arp_sha);
-
-      // Update Ethernet header
-      rte_ether_addr_copy(&eth_hdr->s_addr, &eth_hdr->d_addr);
-      rte_ether_addr_copy(&ether_mac_addr, &eth_hdr->s_addr);
-
-      // Send ARP reply
-      rte_eth_tx_burst(port, queue, &pkt, 1);
-      printf("ARP reply sent\n");
-      //   print_packet_data(pkt);
-    }
-  } else if (rte_be_to_cpu_16(arp_hdr->arp_opcode) == RTE_ARP_OP_REPLY) {
-    // Update ARP table with the sender's information
-    arp_table_add(arp_hdr->arp_data.arp_sip, &arp_hdr->arp_data.arp_sha);
-  }
-}
-
-static void handle_icmp(uint16_t port, uint16_t queue, struct rte_mbuf* pkt,
-                        struct rte_ether_hdr* eth_hdr,
-                        struct rte_ipv4_hdr*  ip_hdr) {
-  struct rte_icmp_hdr* icmp_hdr = rte_pktmbuf_mtod_offset(
-      pkt, struct rte_icmp_hdr*,
-      sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr));
-
-  if (icmp_hdr->icmp_type == RTE_IP_ICMP_ECHO_REQUEST) {
-    // Prepare ICMP echo reply
-    icmp_hdr->icmp_type  = RTE_IP_ICMP_ECHO_REPLY;
-    icmp_hdr->icmp_cksum = 0;
-    icmp_hdr->icmp_cksum = rte_ipv4_icmp_cksum(ip_hdr, icmp_hdr);
-
-    // Update IP header
-    uint32_t tmp_ip      = ip_hdr->src_addr;
-    ip_hdr->src_addr     = ip_hdr->dst_addr;
-    ip_hdr->dst_addr     = tmp_ip;
-    ip_hdr->hdr_checksum = 0;
-    ip_hdr->hdr_checksum = rte_ipv4_cksum(ip_hdr);
-
-    // Update Ethernet header
-    struct rte_ether_addr* dst_mac = arp_table_lookup(tmp_ip);
-    if (dst_mac) {
-      rte_ether_addr_copy(&eth_hdr->d_addr, &eth_hdr->s_addr);
-      rte_ether_addr_copy(dst_mac, &eth_hdr->d_addr);
-
-      // Send ICMP echo reply
-      rte_eth_tx_burst(port, queue, &pkt, 1);
-      printf("ICMP reply sent\n");
-      //   print_packet_data(pkt);
-    }
-  }
-}
-
-static void handle_packet(uint16_t port, uint16_t queue, struct rte_mbuf* buf) {
-  //   print_packet_data(bufs[i]);
-
-  struct rte_ether_hdr* eth_hdr = rte_pktmbuf_mtod(buf, struct rte_ether_hdr*);
-  uint32_t              pkt_len = rte_pktmbuf_pkt_len(buf);
-  char*                 cur_hdr = (char*)eth_hdr + sizeof(struct rte_ether_hdr);
-  // printf("protocol len=%u\n", pkt_len);
-
-  if (rte_be_to_cpu_16(eth_hdr->ether_type) == RTE_ETHER_TYPE_ARP) {
-    printf("got arp \n");
-    handle_arp(port, queue, buf, eth_hdr);
-  } else if (rte_be_to_cpu_16(eth_hdr->ether_type) == RTE_ETHER_TYPE_IPV4) {
-    struct rte_ipv4_hdr* ip_hdr = rte_pktmbuf_mtod_offset(
-        buf, struct rte_ipv4_hdr*, sizeof(struct rte_ether_hdr));
-
-    uint16_t id     = htons(ip_hdr->packet_id);
-    uint16_t ip_len = (ip_hdr->version_ihl & 0x0f) * RTE_IPV4_IHL_MULTIPLIER;
-    cur_hdr += ip_len;
-
-    if (ip_hdr->next_proto_id == IPPROTO_ICMP) {
-      printf("got icmp id %u\n", id);
-      handle_icmp(port, queue, buf, eth_hdr, ip_hdr);
-    } else if (ip_hdr->next_proto_id == IPPROTO_TCP) {
-      struct rte_tcp_hdr* tcp = (struct rte_tcp_hdr*)cur_hdr;
-      printf("got tcp dport %u id %u\n", htons(tcp->dst_port), id);
-    } else if (ip_hdr->next_proto_id == IPPROTO_UDP) {
-      struct rte_udp_hdr* udp = (struct rte_udp_hdr*)cur_hdr;
-      printf("got udp dport %u id %u\n", htons(udp->dst_port), id);
-    }
-  } else {
-    printf("other pkt 0x%x\n", rte_be_to_cpu_16(eth_hdr->ether_type));
-  }
-}
+static int16_t get_queue() { return rte_atomic16_add_return(&queue, 1); }
 
 static inline int port_init(uint8_t port, struct rte_mempool* mbuf_pool) {
   struct rte_eth_conf port_conf = port_conf_default;
@@ -156,8 +45,8 @@ static inline int port_init(uint8_t port, struct rte_mempool* mbuf_pool) {
   if (port >= rte_eth_dev_count_avail()) return -1;
 
   // mac
-  rte_eth_macaddr_get(port, &ether_mac_addr);
-  rte_ether_format_addr(mac_str, sizeof(mac_str), &ether_mac_addr);
+  rte_eth_macaddr_get(port, &mac_addr);
+  rte_ether_format_addr(mac_str, sizeof(mac_str), &mac_addr);
   printf("port %d mac %s\n", port, mac_str);
 
   retval = rte_eth_dev_configure(port, rx_rings, tx_rings, &port_conf);
@@ -189,6 +78,7 @@ static int lcore_main(__rte_unused void* arg) {
   uint16_t         port;
   uint16_t         queue_id;
   unsigned         i;
+  char*            local_ip;
 
   // 每个核只读一个队列
   queue_id = get_queue();
@@ -212,9 +102,11 @@ static int lcore_main(__rte_unused void* arg) {
       nb_rx = rte_eth_rx_burst(port, queue_id, bufs, BURST_SIZE);
       if (unlikely(nb_rx == 0)) continue;
 
+      local_ip = (char*)get_ip(port);
+
       /* Process packets */
       for (i = 0; i < nb_rx; ++i) {
-        handle_packet(port, queue_id, bufs[i]);
+        send_response(port, queue_id, &mac_addr, local_ip, bufs[i]);
       }
 
       /* Free packets */

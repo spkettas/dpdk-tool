@@ -1,11 +1,11 @@
 /**
- * Copyright (c) 1998-2020 gmail Inc. All rights reserved.
+ * Copyright (c) 1998-2020 TENCENT Inc. All rights reserved.
  *
  * @file kni_recv.c
  * @author spkettas (spkettas@gmail.com)
  * @date 2023-07-28
  *
- * @brief kni测试程序（子进程），用来消费RING并与虚拟网卡交互
+ * @brief kni 收包程序
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -81,7 +81,7 @@
 #define KNI_MAX_KTHREAD 32
 #define MSG_POOL        "MSG_POOL"
 #define MBUF_NAME       "MBUF_POOL"
-#define _SMP_MBUF_POOL  "tcpip_queue"
+#define RING_NAME       "tcpip_queue"
 
 /*
  * Structure of port parameters
@@ -311,8 +311,8 @@ static void* monitor_all_ports_link_status(void* arg) {
 
   // set kni ip
   for (i = 0; i < nb_ports; ++i) {
-    // system("ifconfig vEth0 192.168.100.38/24 up");
-    sprintf(eth_name, "vEth%u", i);
+    // system("ifconfig kni0 192.168.100.38/24 up");
+    sprintf(eth_name, "kni%u", i);
 
     sprintf(cmd, "ip addr add 192.168.%d00.38/24 dev %s", i + 1, eth_name);
     system(cmd);
@@ -576,6 +576,10 @@ static int kni_config_mac_address(uint16_t port_id, uint8_t mac_addr[]) {
   return ret;
 }
 
+static int kni_set_mtu(uint16_t port_id, unsigned int new_mtu) {
+  return rte_eth_dev_set_mtu(port_id, (uint16_t)new_mtu);
+}
+
 static int kni_alloc(uint16_t port_id) {
   struct rte_kni*         kni;
   struct rte_kni_conf     conf;
@@ -593,7 +597,7 @@ static int kni_alloc(uint16_t port_id) {
 
   /* Clear conf at first */
   memset(&conf, 0, sizeof(conf));
-  snprintf(conf.name, RTE_KNI_NAMESIZE, "vEth%u", port_id);
+  snprintf(conf.name, RTE_KNI_NAMESIZE, "kni%u", port_id);
 
   ret = rte_eth_dev_info_get(port_id, &dev_info);
   if (ret != 0) {
@@ -615,11 +619,9 @@ static int kni_alloc(uint16_t port_id) {
   conf.max_mtu   = dev_info.max_mtu;
 
   memset(&ops, 0, sizeof(ops));
-  ops.port_id = port_id;
-  // ops.change_mtu         = kni_change_mtu;
-  // ops.config_network_if  = kni_config_network_interface;
+  ops.port_id            = port_id;
   ops.config_mac_address = kni_config_mac_address;
-  ops.change_mtu         = rte_eth_dev_set_mtu;
+  ops.change_mtu         = kni_set_mtu;
   ops.config_network_if  = kni_config_network_interface;
 
   kni = rte_kni_alloc(pktmbuf_pool, &conf, &ops);
@@ -677,7 +679,7 @@ int main(int argc, char** argv) {
 
   // 子进程共享内存
   if (rte_eal_process_type() == RTE_PROC_SECONDARY) {
-    tcpip_ring   = rte_ring_lookup(_SMP_MBUF_POOL);
+    tcpip_ring   = rte_ring_lookup(RING_NAME);
     pktmbuf_pool = rte_mempool_lookup(MBUF_NAME);
     message_pool = rte_mempool_lookup(MSG_POOL);
   } else {

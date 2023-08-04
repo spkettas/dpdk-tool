@@ -21,11 +21,8 @@
 #include <arpa/inet.h>
 #include <netinet/if_ether.h>
 #include <netinet/in.h>
+#include "header.h"
 
-#define RX_RING_SIZE 1024
-#define TX_RING_SIZE 1024
-
-#define NUM_MBUFS       8191
 #define MBUF_CACHE_SIZE 250
 #define BURST_SIZE      32
 
@@ -64,31 +61,8 @@ static __rte_noreturn void lcore_main(uint16_t port) {
     }
 
     for (i = 0; i < nb_rx; i++) {
-      // parse pkt
-      struct rte_ether_hdr* eth_hdr =
-          rte_pktmbuf_mtod(bufs[i], struct rte_ether_hdr*);
-      char* cur_hdr = (char*)eth_hdr + sizeof(struct rte_ether_hdr);
-
-      if (rte_be_to_cpu_16(eth_hdr->ether_type) == RTE_ETHER_TYPE_ARP) {
-        printf("got arp\n");
-      } else if (rte_be_to_cpu_16(eth_hdr->ether_type) == RTE_ETHER_TYPE_IPV4) {
-        struct rte_ipv4_hdr* ip_hdr = rte_pktmbuf_mtod_offset(
-            bufs[i], struct rte_ipv4_hdr*, sizeof(struct rte_ether_hdr));
-        uint8_t ip_len = rte_ipv4_hdr_len(ip_hdr);
-        cur_hdr += ip_len;
-
-        if (ip_hdr->next_proto_id == IPPROTO_ICMP) {
-          printf("got icmp\n");
-        } else if (ip_hdr->next_proto_id == IPPROTO_TCP) {
-          struct rte_tcp_hdr* tcp = (struct rte_tcp_hdr*)cur_hdr;
-          printf("got tcp dport %u\n", htons(tcp->dst_port));
-        } else if (ip_hdr->next_proto_id == IPPROTO_UDP) {
-          struct rte_udp_hdr* udp = (struct rte_udp_hdr*)cur_hdr;
-          printf("got udp dport %u\n", htons(udp->dst_port));
-        }
-      } else {
-        printf("other pkt 0x%x\n", rte_be_to_cpu_16(eth_hdr->ether_type));
-      }
+      // print packet info
+      show_pktinfo(port, bufs[i]);
     }
 
     for (i = 0; i < nb_rx; i++) {

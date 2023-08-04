@@ -1,11 +1,11 @@
 /**
- * Copyright (c) 1998-2020 gmail Inc. All rights reserved.
+ * Copyright (c) 1998-2020 TENCENT Inc. All rights reserved.
  *
- * @file simple.c
+ * @file kni_send.c
  * @author spkettas (spkettas@gmail.com)
  * @date 2023-07-28
  *
- * @brief kni测试程序（主进程），用来收包并写RING
+ * @brief kni发包程序
  */
 #include <inttypes.h>
 #include <rte_arp.h>
@@ -21,21 +21,18 @@
 #include <arpa/inet.h>
 #include <netinet/if_ether.h>
 #include <netinet/in.h>
+#include "header.h"
 #include "rte_common.h"
 #include "rte_mbuf_core.h"
 #include "rte_ring.h"
 
-#define RX_RING_SIZE 1024
-#define TX_RING_SIZE 1024
-
-#define NUM_MBUFS       8191
 #define MBUF_CACHE_SIZE 250
 #define BURST_SIZE      32
 
-#define NB_MBUFS       64 * 1024 /* use 64k mbufs */
-#define MBUF_NAME      "MBUF_POOL"
-#define MSG_POOL       "MSG_POOL"
-#define _SMP_MBUF_POOL "tcpip_queue"
+#define NB_MBUFS  64 * 1024 /* use 64k mbufs */
+#define MBUF_NAME "MBUF_POOL"
+#define MSG_POOL  "MSG_POOL"
+#define RING_NAME "tcpip_queue"
 
 // TODO 从配置中读取
 #define LOCAL_IP1 644131008  // ip0="192.168.100.38"
@@ -57,10 +54,6 @@ struct net_message {
   struct rte_mbuf* mbuf;
   int64_t          port;
 };
-
-static int is_stp(const char* hdr) {
-  return (hdr[0] == 0x42 && hdr[1] == 0x42);
-}
 
 static void enqueue_mbuf(uint16_t port, struct rte_mbuf* mbuf) {
   // rte_ring_sp_enqueue(tcpip_ring, mbuf);
@@ -106,7 +99,6 @@ static int lcore_main(__rte_unused void* arg) {
 
   while (1) {
     for (port = 0; port < nb_ports; ++port) {
-      /* Get burst of RX packets, from first port of pair. */
       nb_rx = rte_eth_rx_burst(port, 0, bufs, BURST_SIZE);
 
       if (unlikely(nb_rx == 0)) {
@@ -118,37 +110,7 @@ static int lcore_main(__rte_unused void* arg) {
         filter_pkt(port, bufs[i]);
 
         // parse pkt
-        struct rte_ether_hdr* eth_hdr =
-            rte_pktmbuf_mtod(bufs[i], struct rte_ether_hdr*);
-        char* cur_hdr = (char*)eth_hdr + sizeof(struct rte_ether_hdr);
-
-        if (eth_hdr->ether_type == rte_be_to_cpu_16(RTE_ETHER_TYPE_ARP)) {
-          printf("port %u got arp\n", port);
-        } else if (eth_hdr->ether_type ==
-                   rte_be_to_cpu_16(RTE_ETHER_TYPE_IPV4)) {
-          struct rte_ipv4_hdr* ip_hdr = rte_pktmbuf_mtod_offset(
-              bufs[i], struct rte_ipv4_hdr*, sizeof(struct rte_ether_hdr));
-          uint8_t ip_len = rte_ipv4_hdr_len(ip_hdr);
-          cur_hdr += ip_len;
-
-          if (ip_hdr->next_proto_id == IPPROTO_ICMP) {
-            printf("port %u got icmp\n", port);
-          } else if (ip_hdr->next_proto_id == IPPROTO_TCP) {
-            struct rte_tcp_hdr* tcp = (struct rte_tcp_hdr*)cur_hdr;
-            printf("port %u got tcp dport %u\n", port, htons(tcp->dst_port));
-          } else if (ip_hdr->next_proto_id == IPPROTO_UDP) {
-            struct rte_udp_hdr* udp = (struct rte_udp_hdr*)cur_hdr;
-            printf("port %u got udp dport %u\n", port, htons(udp->dst_port));
-          }
-        } else if (eth_hdr->ether_type ==
-                   rte_be_to_cpu_16(RTE_ETHER_TYPE_IPV6)) {
-          printf("port %u got ipv6\n", port);
-        } else if (is_stp(cur_hdr)) {
-          printf("port %u got stp\n", port);
-        } else {
-          printf("port %u other pkt 0x%x\n", port,
-                 rte_be_to_cpu_16(eth_hdr->ether_type));
-        }
+        show_pktinfo(port, bufs[i]);
       }
     }
 
@@ -250,8 +212,8 @@ int main(int argc, char* argv[]) {
         rte_mempool_create(MSG_POOL, 8192, sizeof(struct net_message), 32, 0,
                            NULL, NULL, NULL, NULL, rte_socket_id(), 0);
 
-    // rte_ring_create(_SMP_MBUF_POOL, 4096, 0, RING_F_SP_ENQ | RING_F_SC_DEQ);
-    tcpip_ring = rte_ring_create(_SMP_MBUF_POOL, 8192, 0,
+    // rte_ring_create(RING_NAME, 4096, 0, RING_F_SP_ENQ | RING_F_SC_DEQ);
+    tcpip_ring = rte_ring_create(RING_NAME, 8192, 0,
                                  RING_F_MP_RTS_ENQ | RING_F_MC_RTS_DEQ);
     if (tcpip_ring == NULL) {
       rte_exit(EXIT_FAILURE, "Cannot get memory pool for buffers\n");
