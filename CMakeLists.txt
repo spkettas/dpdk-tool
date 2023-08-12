@@ -25,5 +25,6 @@ include_directories(
 add_subdirectory(singlechannel)
 add_subdirectory(multichannel)
 add_subdirectory(dpdkpcap)
+add_subdirectory(tap)
 add_subdirectory(kni)
 add_subdirectory(kni_queue)
